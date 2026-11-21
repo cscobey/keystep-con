@@ -119,7 +119,7 @@
 @ state in external RAM, in a stretch no stock code references (below the
 @ save staging buffer at 0xC01F0000); not cleared at boot, so it carries a magic
 .equ PAD_STATE,     0xC01EF800
-.equ PAD_MAGIC,     0x5443445a      @ "ZDCT" (v15 layout: Octatrack mode state)
+.equ PAD_MAGIC,     0x5443455a      @ "ZECT" (v16 resets channel bank to 0)
 .equ ST_MODE,       4               @ 0 off, 1 drum pads, 2-4 chord pads for track 2-4,
                                     @ 5-8 root chords for track 1-4
 .equ CT_MODE,       5
@@ -174,6 +174,7 @@ pad_state:
     strb    r0, [r7, #ST_MLOCK]
     strb    r0, [r7, #ST_MLDONE]
     strb    r0, [r7, #ST_BANK]
+    strb    r0, [r7, #ST_OTBANK]     @ channel bank starts at 1-4
     strb    r0, [r7, #ST_STEP]
     strb    r0, [r7, #ST_NOCAP]
     str     r0, [r7, #ST_STIME]
@@ -184,7 +185,6 @@ pad_state:
     strb    r0, [r7, #ST_SKEY]
     str     r0, [r7, #ST_LOCT]
     str     r0, [r7, #ST_OTLOW]
-    strb    r0, [r7, #ST_OTBANK]
     movs    r2, #0
 2:  adds    r3, r7, r2
     strb    r0, [r3, #ST_NOTE]

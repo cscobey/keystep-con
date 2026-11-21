@@ -57,6 +57,9 @@
 @ from 0x12: pattern down, up, Seq, Drum/Arp, Mute, Track select. Shift 1, Exit 0xc, Erase 0x10,
 @ steps 0x2e-0x3d.
 @ Held keys: 37 x {note, channel, track} at 0x20004ddc, note 0xff when the key is up.
+@ Octatrack mode (global 118): Pattern+steps 1-4 selects a track MIDI channel;
+@ Shift+Octave changes the channel bank. At the lowest range, Octave Down adds
+@ one octave below C1; Octave Up exits it. The -2 LED blinks while enabled.
 
 .equ STOCK_PRESS,   0x080500d8
 .equ STOCK_RELEASE, 0x0804e700
@@ -80,6 +83,13 @@
 .equ RECORDING,     0x20003d91      @ live recording (the drum keys' test)
 .equ REC_ARMED,     0x20002d5b      @ ... or armed while the sequencer plays (seq + 0xc)
 .equ STOCK_KEY_REC, 0x080108a4      @ live key record, called by the event loop at 08015ee0
+.equ OT_MODE_ID,    118             @ KSCON's combined Octatrack mode setting
+.equ OT_CHAN_BASE,  75              @ Track 1-4 MIDI output channels
+.equ OT_DRUM_CHAN,  79              @ Track 1 drum-mode output channel
+.equ ID_PATTERN,    0x07
+.equ ID_OCT_DOWN,   5               @ stock button IDs from 080500d8
+.equ ID_OCT_UP,     6
+.equ HAL_TICK,      0x20006218      @ 0.1 ms display tick
 .equ MIDI_PORT_PTR, 0x20001800
 .equ GLOBALS,       0x20000874      @ global id N at +4+N
 .equ SEQ_PTR,       0x20001498      @ -> sequencer state, 0xfec per project
@@ -109,7 +119,7 @@
 @ state in external RAM, in a stretch no stock code references (below the
 @ save staging buffer at 0xC01F0000); not cleared at boot, so it carries a magic
 .equ PAD_STATE,     0xC01EF800
-.equ PAD_MAGIC,     0x5343445a      @ "ZDCS" (v14 layout: + pad octave offsets)
+.equ PAD_MAGIC,     0x5443445a      @ "ZDCT" (v15 layout: Octatrack mode state)
 .equ ST_MODE,       4               @ 0 off, 1 drum pads, 2-4 chord pads for track 2-4,
                                     @ 5-8 root chords for track 1-4
 .equ CT_MODE,       5
@@ -135,6 +145,8 @@
 .equ ST_NOCAP,      494             @ 1 while step play presses a pad: never capture held keys
 .equ ST_POFF,       496             @ shared pads: 3 x s8 octave offset per track 2-4 (octave buttons, po_shift)
 .equ ST_LOCT,       500             @ shared pads: 3 x keyboard octave last seen per track 2-4, 0xff none
+.equ ST_OTLOW,      504             @ 4: per-track extra-lower-octave state
+.equ ST_OTBANK,     508             @ 0-3: current Octatrack channel bank
 .equ ST_TABLE,      128             @ 256: copy of the project's chord block (flash layout):
                                     @ magic, layout byte, step play byte (1 on), 2 spare, then track 2-4 x 16 pads x 5 notes,
                                     @ or (layout 1) 64 shared pads x 3 notes; 0xff unused
@@ -171,6 +183,8 @@ pad_state:
     strb    r0, [r7, #ST_BT]
     strb    r0, [r7, #ST_SKEY]
     str     r0, [r7, #ST_LOCT]
+    str     r0, [r7, #ST_OTLOW]
+    strb    r0, [r7, #ST_OTBANK]
     movs    r2, #0
 2:  adds    r3, r7, r2
     strb    r0, [r3, #ST_NOTE]
@@ -504,6 +518,119 @@ pp_entry:                           @ local name for calls from the step play ho
     mov     r5, r1
     mov     r6, r2
     bl      pad_state
+    @ One combined Octatrack mode: Pattern+steps 1-4 chooses track channels,
+    @ Shift+Octave changes banks, and the lowest octave gets a C0-B0 extension.
+    ldr     r0, =GLOBALS
+    ldrb    r0, [r0, #4 + OT_MODE_ID]
+    cmp     r0, #1
+    bne     40f
+    subs    r0, r5, #0x2e
+    cmp     r0, #3
+    bhi     41f
+    mov     r9, r0
+    mov     r0, r4
+    movs    r1, #ID_PATTERN
+    bl      is_held
+    cbz     r0, 41f
+    ldr     r0, =SEL_TRACK
+    ldrb    r8, [r0]
+    movs    r11, #0
+    cmp     r8, #4
+    bne     42f
+    movs    r8, #0
+    movs    r11, #1               @ track 1 drum mode uses global 79
+42: cmp     r8, #3
+    bhi     41f
+    ldrb    r10, [r7, #ST_OTBANK]
+    lsls    r10, r10, #2
+    adds    r10, r9
+    ldr     r0, =GLOBALS
+    add     r0, r0, r8
+    add     r0, #4 + OT_CHAN_BASE
+    strb    r10, [r0]
+    cmp     r11, #0
+    beq     43f
+    ldr     r0, =GLOBALS
+    add     r0, #4 + OT_DRUM_CHAN
+    strb    r10, [r0]
+43: strb    r5, [r7, #ST_SW]
+    pop     {r3-r11, pc}
+41: ldrb    r0, [r7, #ST_SHIFT]
+    cbz     r0, 44f
+    cmp     r5, #ID_OCT_DOWN
+    beq     45f
+    cmp     r5, #ID_OCT_UP
+    bne     40f
+    ldrb    r8, [r7, #ST_OTBANK]
+    adds    r8, #1
+    and     r8, r8, #3
+    b       46f
+45: ldrb    r8, [r7, #ST_OTBANK]
+    subs    r8, #1
+    and     r8, r8, #3
+46: strb    r8, [r7, #ST_OTBANK]
+    movs    r9, #0
+47: ldr     r11, =GLOBALS
+    add     r11, r11, r9
+    add     r11, #4 + OT_CHAN_BASE
+    ldrb    r10, [r11]
+    and     r10, r10, #3
+    orr     r10, r10, r8, lsl #2
+    strb    r10, [r11]
+    cmp     r9, #0
+    bne     48f
+    ldr     r11, =GLOBALS
+    add     r11, #4 + OT_DRUM_CHAN
+    strb    r10, [r11]
+48: adds    r9, #1
+    cmp     r9, #4
+    blo     47b
+    strb    r5, [r7, #ST_SW]
+    pop     {r3-r11, pc}
+44: cmp     r5, #ID_OCT_UP
+    bne     49f
+    ldr     r0, =SEL_TRACK
+    ldrb    r8, [r0]
+    cmp     r8, #4
+    it      eq
+    moveq   r8, #0
+    add     r0, r7, r8
+    ldrb    r0, [r0, #ST_OTLOW]
+    cbz     r0, 40f
+    add     r0, r7, r8
+    movs    r1, #0
+    strb    r1, [r0, #ST_OTLOW]
+    strb    r5, [r7, #ST_SW]
+    pop     {r3-r11, pc}
+49: cmp     r5, #ID_OCT_DOWN
+    bne     40f
+    ldr     r0, =SEQ_PTR
+    ldr     r0, [r0]
+    ldr     r1, =CUR_PROJECT
+    ldrb    r1, [r1]
+    movw    r2, #0x0fec
+    mul     r1, r2
+    add     r0, r0, r1
+    ldr     r1, =SEL_TRACK
+    ldrb    r8, [r1]
+    cmp     r8, #4
+    it      eq
+    moveq   r8, #0
+    movw    r2, #0x16
+    mul     r1, r8, r2
+    add     r0, r0, r1
+    movw    r2, #0x1752
+    add     r0, r0, r2
+    ldrb    r0, [r0]
+    and     r0, r0, #7
+    cmp     r0, #0
+    bne     40f
+    add     r0, r7, r8
+    movs    r1, #1
+    strb    r1, [r0, #ST_OTLOW]
+    strb    r5, [r7, #ST_SW]
+    pop     {r3-r11, pc}
+40:
     cmp     r5, #ID_SHIFT           @ Shift down: the mod strip lock may toggle once (ml_strip)
     bne     4f
     movs    r0, #1
@@ -1136,6 +1263,29 @@ key_send:
 .type key_rec,%function
 key_rec:
     push    {r0-r3}
+    @ Transpose before the stock handler stores/records this note so its note-off
+    @ is sent for the same MIDI pitch.
+    ldr     r0, =GLOBALS
+    ldrb    r0, [r0, #4 + OT_MODE_ID]
+    cmp     r0, #1
+    bne     10f
+    ldr     r0, =PAD_STATE
+    ldr     r1, [r0]
+    ldr     r2, =PAD_MAGIC
+    cmp     r1, r2
+    bne     10f
+    ldr     r2, [sp, #12]
+    ldrb    r2, [r2]
+    add     r0, r0, r2
+    ldrb    r0, [r0, #ST_OTLOW]
+    cbz     r0, 10f
+    ldr     r1, [sp, #4]
+    ldrb    r2, [r1]
+    cmp     r2, #12
+    blo     10f
+    subs    r2, #12
+    strb    r2, [r1]
+10:
     ldr     r0, =PAD_STATE
     ldr     r1, [r0]
     ldr     r2, =PAD_MAGIC
@@ -1269,12 +1419,46 @@ key_up:
 .global led_flush
 .type led_flush,%function
 led_flush:
-    push    {r4, lr}
+    push    {r4-r6, lr}
     mov     r4, r0
+    @ Blink octave LED -2 while the extra low range is active on this track.
+    ldr     r5, =PAD_STATE
+    ldr     r0, [r5]
+    ldr     r1, =PAD_MAGIC
+    cmp     r0, r1
+    bne     11f
+    ldr     r0, =GLOBALS
+    ldrb    r0, [r0, #4 + OT_MODE_ID]
+    cmp     r0, #1
+    bne     11f
+    ldr     r0, =SEL_TRACK
+    ldrb    r6, [r0]
+    cmp     r6, #4
+    it      eq
+    moveq   r6, #0
+    cmp     r6, #3
+    bhi     11f
+    add     r0, r5, r6
+    ldrb    r0, [r0, #ST_OTLOW]
+    cbz     r0, 11f
+    ldr     r0, =HAL_TICK
+    ldr     r2, [r0]
+    lsrs    r2, r2, #12
+    and     r2, r2, #1
+    movs    r1, #5
+    movs    r3, #8
+    sub     sp, #8
+    movs    r0, #0
+    str     r0, [sp]
+    str     r0, [sp, #4]
+    mov     r0, r4
+    call_abs LED_SET
+    add     sp, #8
+11:
     adr     r1, chord_notes + 1
     bl      ns_leds
     mov     r0, r4
-    pop     {r4, lr}
+    pop     {r4-r6, lr}
     ldr     r12, =(LED_FLUSH + 1)
     bx      r12
 .size led_flush, .-led_flush

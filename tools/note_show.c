@@ -35,7 +35,7 @@ typedef unsigned int u32;
 #define LEDS_PTR    (*(u8 *volatile *)0x20001490)
 #define TRACK_COLOURS ((volatile u8 *)0x20000058)
 #define PAD         ((u8 *)0xC01EF800)                /* pad state (pad_hooks.S) */
-#define PAD_MAGIC   0x5343445au
+#define PAD_MAGIC   0x5443445au
 enum { ST_MODE = 4, ST_TAG = 6, ST_NOTE = 16, ST_UNDO = 112, ST_TABLE = 128, ST_SHIFT = 483, ST_MLOCK = 484, ST_MLDONE = 485,
        ST_BANK = 486, ST_STEP = 487, ST_STIME = 488, ST_POFF = 496, ST_LOCT = 500 };
 #define TICK        (*(volatile u32 *)0x20006218)     /* HAL tick, 0.1 ms (SysTick 0803d124 -> 0803e428; stock divides by 10) */

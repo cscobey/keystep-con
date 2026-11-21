@@ -397,6 +397,31 @@ led_flush:
     ldrb    r0, [r0, #4 + OT_MODE_ID]
     cmp     r0, #1
     bne     flush_stock
+    @ Blink the Octave Down indicator for the extra -2 octave on the selected track.
+    ldr     r0, =SEL_TRACK
+    ldrb    r8, [r0]
+    cmp     r8, #4
+    it      eq
+    moveq   r8, #0
+    cmp     r8, #3
+    bhi     21f
+    add     r0, r7, r8
+    ldrb    r0, [r0, #ST_LOW]
+    cbz     r0, 21f
+    ldr     r0, =HAL_TICK
+    ldr     r2, [r0]
+    lsrs    r2, r2, #12
+    and     r2, r2, #1
+    movs    r1, #ID_OCT_DOWN
+    movs    r3, #8
+    sub     sp, #8
+    movs    r0, #0
+    str     r0, [sp]
+    str     r0, [sp, #4]
+    mov     r0, r4
+    call_abs LED_SET
+    add     sp, #8
+21:
     ldr     r0, =BUTTONS_PTR
     ldr     r5, [r0]
     movs    r8, #0
